@@ -1,0 +1,2 @@
+-dontwarn org.checkerframework.**
+-keep class com.maherco.kicktv.** { *; }
