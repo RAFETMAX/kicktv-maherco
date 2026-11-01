@@ -1,0 +1,59 @@
+name: Build KickTV APK
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v3
+        with:
+          gradle-version: '8.7'
+
+      - name: Create signing key
+        run: |
+          keytool -genkeypair -v -keystore kicktv.keystore -alias kicktv \
+            -keyalg RSA -keysize 2048 -validity 10950 \
+            -storepass kicktv12345 -keypass kicktv12345 \
+            -dname "CN=KickTV, OU=Player, O=Maherco, L=Riyadh, C=SA"
+
+      - name: Build release APK
+        env:
+          KEYSTORE_FILE: kicktv.keystore
+          KEYSTORE_PASSWORD: kicktv12345
+          KEY_ALIAS: kicktv
+          KEY_PASSWORD: kicktv12345
+        run: gradle assembleRelease --no-daemon --stacktrace
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: KickTV-APK
+          path: app/build/outputs/apk/release/*.apk
+          if-no-files-found: error
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v1.0.${{ github.run_number }}
+          name: KickTV v1.0.${{ github.run_number }}
+          body: |
+            APK جاهز للتثبيت على الأندرويد / أندرويد تي في.
+            يشغّل بث kick.com/maherco بواجهة احترافية تختفي تلقائياً.
+          files: app/build/outputs/apk/release/*.apk
