@@ -23,6 +23,8 @@ import android.widget.ProgressBar
 import android.widget.SeekBar
 import android.widget.TextView
 import android.widget.Toast
+import android.content.ClipboardManager
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
@@ -49,13 +51,29 @@ class MainActivity : AppCompatActivity() {
 
     private val JS_PROBE = """
     (function () {
-      try {
-        var html = document.documentElement.innerHTML || "";
-        var m = html.match(/"username"\s*:\s*"([A-Za-z0-9_.\-]{2,32})"/);
-        return JSON.stringify({ path: location.pathname || "", user: m ? m[1] : "" });
-      } catch (e) {
-        return JSON.stringify({ path: "", user: "" });
+      var out = { ok: false, user: "", statuses: [] };
+      var eps = ["/api/v2/me", "/api/v2/user", "/api/v2/channels/followed"];
+      function done() { try { KickTVProbe.post(JSON.stringify(out)); } catch (e) {} }
+      function step(i) {
+        if (i >= eps.length) { done(); return; }
+        fetch(eps[i], { credentials: "include", headers: { "Accept": "application/json", "x-app-platform": "web" } })
+          .then(function (r) {
+            out.statuses.push(r.status);
+            if (r.status === 200) {
+              r.text().then(function (t) {
+                try {
+                  var j = JSON.parse(t);
+                  var u = j.username || (j.user && j.user.username) || (j.data && j.data.username) || "";
+                  if (u) out.user = u;
+                } catch (e) {}
+                out.ok = true;
+                done();
+              });
+            } else { step(i + 1); }
+          })
+          .catch(function () { out.statuses.push(-1); step(i + 1); });
       }
+      step(0);
     })()
     """
 
@@ -613,6 +631,76 @@ class MainActivity : AppCompatActivity() {
         panelContent.addView(tv)
     }
 
+    private fun showImportDialog() {
+        val box = LinearLayout(this)
+        box.orientation = LinearLayout.VERTICAL
+        box.setPadding(dp(18), dp(8), dp(18), 0)
+
+        val field = EditText(this)
+        field.hint = getString(R.string.import_hint)
+        field.textSize = 11.5f
+        field.minLines = 4
+        field.maxLines = 8
+        field.gravity = Gravity.TOP or Gravity.START
+        field.setTextColor(ContextCompat.getColor(this, R.color.text_primary))
+        field.setHintTextColor(ContextCompat.getColor(this, R.color.text_secondary))
+        field.setBackgroundResource(R.drawable.bg_field)
+        field.setPadding(dp(12), dp(10), dp(12), dp(10))
+        box.addView(field)
+
+        val paste = TextView(this)
+        paste.text = getString(R.string.paste_clipboard)
+        paste.setTextColor(ContextCompat.getColorStateList(this, R.color.chip_text))
+        paste.textSize = 13f
+        paste.gravity = Gravity.CENTER
+        paste.setBackgroundResource(R.drawable.chip_bg)
+        paste.isSelected = true
+        paste.isFocusable = true
+        paste.setPadding(dp(16), dp(10), dp(16), dp(10))
+        val plp = LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT
+        )
+        plp.topMargin = dp(10)
+        paste.layoutParams = plp
+        paste.setOnClickListener {
+            try {
+                val cm = getSystemService(CLIPBOARD_SERVICE) as ClipboardManager
+                val clip = cm.primaryClip
+                if (clip != null && clip.itemCount > 0) {
+                    field.setText(clip.getItemAt(0).coerceToText(this).toString())
+                }
+            } catch (_: Exception) {
+            }
+        }
+        box.addView(paste)
+
+        val dialog = AlertDialog.Builder(this)
+            .setTitle(R.string.import_session)
+            .setView(box)
+            .setPositiveButton(R.string.apply, null)
+            .setNegativeButton(R.string.close, null)
+            .create()
+
+        dialog.setOnShowListener {
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                val ok = SessionStore.importJson(this, field.text.toString())
+                Toast.makeText(
+                    this,
+                    if (ok) R.string.import_done else R.string.import_failed,
+                    Toast.LENGTH_LONG
+                ).show()
+                if (ok) {
+                    dialog.dismiss()
+                    sessionState = 0
+                    updateStatusCard()
+                    probeSession()
+                }
+            }
+        }
+        dialog.show()
+    }
+
     private fun addStatusCard() {
         val card = LinearLayout(this)
         card.orientation = LinearLayout.VERTICAL
@@ -719,11 +807,12 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
-     * Ground-truth check: opens Kick's dashboard in a hidden WebView carrying the
-     * bundled cookies. If Kick keeps the page on the dashboard, or exposes the
-     * username, the session works. If it bounces to /login it does not.
+     * Ground-truth check: loads Kick inside a hidden WebView with the bundled
+     * cookies, then runs a same-origin request from the page itself. That is
+     * exactly what the website does, so it passes the bot checks a native HTTP
+     * client trips over.
      */
-    @SuppressLint("SetJavaScriptEnabled")
+    @SuppressLint("SetJavaScriptEnabled", "AddJavascriptInterface")
     private fun probeSession() {
         if (probeRunning) return
         probeRunning = true
@@ -737,15 +826,19 @@ class MainActivity : AppCompatActivity() {
         web.settings.userAgentString = KickApi.userAgent()
         CookieManager.getInstance().setAcceptCookie(true)
         CookieManager.getInstance().setAcceptThirdPartyCookies(web, true)
+        web.addJavascriptInterface(ProbeBridge { raw -> handleProbe(raw, web) }, "KickTVProbe")
         web.webViewClient = object : WebViewClient() {
             override fun onPageFinished(view: WebView, url: String) {
                 view.postDelayed({
-                    view.evaluateJavascript(JS_PROBE) { raw -> handleProbe(raw, web) }
-                }, 2000)
+                    try {
+                        view.evaluateJavascript(JS_PROBE, null)
+                    } catch (_: Exception) {
+                    }
+                }, 1500)
             }
         }
         root.addView(web, FrameLayout.LayoutParams(1, 1))
-        web.loadUrl("https://kick.com/dashboard")
+        web.loadUrl("https://kick.com/")
         ui.postDelayed({
             if (probeRunning) {
                 probeRunning = false
@@ -759,21 +852,23 @@ class MainActivity : AppCompatActivity() {
     private fun handleProbe(raw: String?, web: WebView) {
         if (!probeRunning) return
         probeRunning = false
-        var path = ""
+        var ok = false
         var user = ""
+        val statuses = mutableListOf<Int>()
         try {
-            val inner = JSONTokener(raw ?: "").nextValue()
-            if (inner is String) {
-                val o = JSONObject(inner)
-                path = o.optString("path", "")
-                user = o.optString("user", "")
-            }
+            val o = JSONObject(raw ?: "{}")
+            ok = o.optBoolean("ok", false)
+            user = o.optString("user", "")
+            val arr = o.optJSONArray("statuses")
+            if (arr != null) for (i in 0 until arr.length()) statuses.add(arr.optInt(i, 0))
         } catch (_: Exception) {
         }
-        val loggedIn = user.isNotBlank() ||
-            (path.startsWith("/dashboard") && !path.contains("login"))
         if (user.isNotBlank() && user.length < 40) settings.kickUsername = user
-        sessionState = if (loggedIn) 1 else -1
+        sessionState = when {
+            ok -> 1
+            statuses.isNotEmpty() && statuses.all { it == 401 || it == 403 } -> -1
+            else -> -2
+        }
         updateStatusCard()
         dropWebView(web)
     }
@@ -837,6 +932,7 @@ class MainActivity : AppCompatActivity() {
         addSection(getString(R.string.account))
         addStatusCard()
         addActionRow(getString(R.string.check_session)) { probeSession() }
+        addActionRow(getString(R.string.import_session)) { showImportDialog() }
 
         addSection(getString(R.string.quality))
         val options = mutableListOf(Pair(getString(R.string.auto), 0))

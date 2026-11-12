@@ -40,4 +40,9 @@
     <string name="delay_value">الفارق عن البث المباشر: %1$s</string>
     <string name="quality_value">الجودة الحالية: %1$s</string>
     <string name="session_unknown">تعذّر فحص الجلسة — أعد المحاولة</string>
+    <string name="import_session">استيراد جلسة كوكيز</string>
+    <string name="import_hint">الصق هنا ملف الكوكيز بصيغة JSON كما يصدّره المتصفح</string>
+    <string name="paste_clipboard">لصق من الحافظة</string>
+    <string name="import_done">تم حفظ الجلسة وتطبيقها</string>
+    <string name="import_failed">صيغة غير صحيحة — تأكد أنه ملف كوكيز JSON</string>
 </resources>
