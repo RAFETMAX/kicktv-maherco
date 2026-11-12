@@ -6,3 +6,4 @@ build/
 app/build/
 *.keystore
 .DS_Store
+app/src/main/assets/kick_session.json

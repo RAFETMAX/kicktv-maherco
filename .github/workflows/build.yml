@@ -26,6 +26,18 @@ jobs:
         with:
           gradle-version: '8.7'
 
+      - name: Inject account session
+        env:
+          KICK_SESSION_B64: ${{ secrets.KICK_SESSION_B64 }}
+        run: |
+          mkdir -p app/src/main/assets
+          if [ -n "$KICK_SESSION_B64" ]; then
+            printf '%s' "$KICK_SESSION_B64" | base64 -d > app/src/main/assets/kick_session.json
+            echo "embedded account session ($(wc -c < app/src/main/assets/kick_session.json) bytes)"
+          else
+            echo "::warning::KICK_SESSION_B64 secret is not set - building without an embedded session"
+          fi
+
       - name: Create signing key
         run: |
           keytool -genkeypair -v -keystore kicktv.keystore -alias kicktv \

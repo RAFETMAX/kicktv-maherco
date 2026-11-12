@@ -14,6 +14,8 @@ data class ChannelInfo(
 
 object KickApi {
 
+    fun userAgent(): String = UA
+
     private const val UA =
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 
@@ -64,6 +66,8 @@ object KickApi {
                 setRequestProperty("Accept-Language", "en-US,en;q=0.9")
                 setRequestProperty("Referer", "https://kick.com/")
                 setRequestProperty("Origin", "https://kick.com")
+                val cookie = SessionStore.cookieHeader()
+                if (cookie.isNotBlank()) setRequestProperty("Cookie", cookie)
             }
             if (conn.responseCode !in 200..299) return null
             return conn.inputStream.bufferedReader().use { it.readText() }

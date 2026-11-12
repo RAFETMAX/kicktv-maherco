@@ -42,10 +42,5 @@
             </intent-filter>
         </activity>
 
-        <activity
-            android:name=".LoginActivity"
-            android:configChanges="orientation|screenSize|keyboardHidden"
-            android:exported="false"
-            android:theme="@style/Theme.KickTV" />
     </application>
 </manifest>

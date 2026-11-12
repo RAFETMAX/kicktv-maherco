@@ -1,7 +1,6 @@
 package com.maherco.kicktv
 
 import android.annotation.SuppressLint
-import android.content.Intent
 import android.media.AudioManager
 import android.os.Bundle
 import android.os.Handler
@@ -34,8 +33,10 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.Tracks
+import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import java.text.SimpleDateFormat
@@ -83,6 +84,7 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         settings = SettingsStore(this)
+        SessionStore.apply(this)
         audioManager = getSystemService(AUDIO_SERVICE) as AudioManager
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         WindowCompat.setDecorFitsSystemWindows(window, false)
@@ -134,7 +136,15 @@ class MainActivity : AppCompatActivity() {
             .setPrioritizeTimeOverSizeThresholds(true)
             .build()
 
-        player = ExoPlayer.Builder(this).setLoadControl(loadControl).build()
+        val httpFactory = DefaultHttpDataSource.Factory()
+            .setUserAgent(KickApi.userAgent())
+            .setAllowCrossProtocolRedirects(true)
+            .setDefaultRequestProperties(streamHeaders())
+
+        player = ExoPlayer.Builder(this)
+            .setLoadControl(loadControl)
+            .setMediaSourceFactory(DefaultMediaSourceFactory(this).setDataSourceFactory(httpFactory))
+            .build()
         playerView.player = player
         playerView.useController = false
         playerView.setShowBuffering(PlayerView.SHOW_BUFFERING_NEVER)
@@ -173,6 +183,16 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         })
+    }
+
+    private fun streamHeaders(): Map<String, String> {
+        val headers = mutableMapOf(
+            "Referer" to "https://kick.com/",
+            "Origin" to "https://kick.com"
+        )
+        val cookie = SessionStore.cookieHeader()
+        if (cookie.isNotBlank()) headers["Cookie"] = cookie
+        return headers
     }
 
     private fun applyResizeMode() {
@@ -320,13 +340,7 @@ class MainActivity : AppCompatActivity() {
             showControls()
         }
         findViewById<ImageButton>(R.id.btn_settings).setOnClickListener { showPanel(true) }
-        findViewById<ImageButton>(R.id.btn_account).setOnClickListener {
-            if (settings.signedInName.isBlank()) {
-                startActivity(Intent(this, LoginActivity::class.java))
-            } else {
-                showPanel(true)
-            }
-        }
+        findViewById<ImageButton>(R.id.btn_account).setOnClickListener { showPanel(true) }
         findViewById<ImageButton>(R.id.btn_close_panel).setOnClickListener { showPanel(false) }
         txtQuality.setOnClickListener { showPanel(true) }
 
@@ -548,6 +562,22 @@ class MainActivity : AppCompatActivity() {
         panelContent.addView(tv)
     }
 
+    private fun addInfoRow(text: String) {
+        val tv = TextView(this)
+        tv.text = text
+        tv.setTextColor(ContextCompat.getColor(this, R.color.text_primary))
+        tv.textSize = 14f
+        tv.setBackgroundResource(R.drawable.chip_normal)
+        tv.setPadding(dp(16), dp(12), dp(16), dp(12))
+        val lp = LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT
+        )
+        lp.bottomMargin = dp(8)
+        tv.layoutParams = lp
+        panelContent.addView(tv)
+    }
+
     private fun addChannelEditor() {
         val row = LinearLayout(this)
         row.orientation = LinearLayout.HORIZONTAL
@@ -596,15 +626,10 @@ class MainActivity : AppCompatActivity() {
         panelContent.removeAllViews()
 
         addSection(getString(R.string.account))
-        val signed = settings.signedInName
-        addActionRow(if (signed.isBlank()) getString(R.string.signin) else "$signed · " + getString(R.string.signout)) {
-            if (settings.signedInName.isBlank()) {
-                startActivity(Intent(this, LoginActivity::class.java))
-            } else {
-                settings.signedInName = ""
-                buildPanel()
-            }
-        }
+        addInfoRow(
+            if (SessionStore.hasSession()) getString(R.string.session_embedded)
+            else getString(R.string.session_missing)
+        )
 
         addSection(getString(R.string.quality))
         val options = mutableListOf(Pair(getString(R.string.auto), 0))
@@ -699,7 +724,7 @@ class MainActivity : AppCompatActivity() {
         immersive()
         seekVolume.progress = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
         updateVolumeIcon()
-        if (settings.signedInName.isNotBlank() && panelVisible) buildPanel()
+        if (panelVisible) buildPanel()
     }
 
     override fun onPause() {

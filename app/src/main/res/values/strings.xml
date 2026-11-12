@@ -23,8 +23,6 @@
     <string name="seconds_8">٨ ثوانٍ</string>
     <string name="never">لا تخفِ</string>
     <string name="account">الحساب</string>
-    <string name="signin">تسجيل الدخول (Google / Kick)</string>
-    <string name="signout">تسجيل الخروج</string>
     <string name="channel">القناة</string>
     <string name="channel_hint">اسم القناة في Kick</string>
     <string name="apply">تطبيق</string>
@@ -32,11 +30,11 @@
     <string name="playback">التشغيل</string>
     <string name="go_live">العودة للمباشر</string>
     <string name="mute">كتم الصوت</string>
-    <string name="login_title">تسجيل الدخول إلى Kick</string>
-    <string name="login_done">تم تسجيل الدخول بنجاح</string>
     <string name="fallback_notice">تم التحويل إلى المشغل البديل</string>
     <string name="engine">محرك التشغيل</string>
     <string name="engine_native">سريع (بلا تأخير)</string>
     <string name="engine_web">المشغل الرسمي (بديل)</string>
     <string name="about">KickTV — مشغل بث مباشر لتلفازك</string>
+    <string name="session_embedded">متصل بحسابك — جلسة مدمجة</string>
+    <string name="session_missing">لا توجد جلسة مدمجة في هذا الإصدار</string>
 </resources>
