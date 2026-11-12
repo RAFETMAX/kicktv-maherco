@@ -20,9 +20,15 @@ object SessionStore {
     @Volatile
     private var loaded: Boolean = false
 
+    @Volatile
+    private var token: String = ""
+
     fun cookieHeader(): String = header
 
     fun hasSession(): Boolean = header.isNotBlank()
+
+    /** value of the session_token cookie, used as the bearer token */
+    fun sessionToken(): String = token
 
     fun apply(context: Context) {
         if (loaded) return
@@ -54,6 +60,7 @@ object SessionStore {
                     } catch (_: Exception) {
                     }
                 }
+                if (name == "session_token") token = value
                 if (sb.isNotEmpty()) sb.append("; ")
                 sb.append(name).append('=').append(value)
             }

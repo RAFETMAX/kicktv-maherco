@@ -97,24 +97,15 @@
                 android:textColor="#9FB0BE"
                 android:textSize="15sp" />
 
-            <ImageButton
-                android:id="@+id/btn_account"
-                android:layout_width="48dp"
-                android:layout_height="48dp"
-                android:layout_marginEnd="10dp"
-                android:background="@drawable/ctrl_bg"
-                android:contentDescription="@string/account"
-                android:padding="12dp"
-                android:src="@drawable/ic_person" />
 
             <ImageButton
                 android:id="@+id/btn_settings"
-                android:layout_width="48dp"
-                android:layout_height="48dp"
+                android:layout_width="52dp"
+                android:layout_height="52dp"
                 android:background="@drawable/ctrl_bg"
                 android:contentDescription="@string/settings"
-                android:padding="12dp"
-                android:src="@drawable/ic_tune" />
+                android:padding="13dp"
+                android:src="@drawable/ic_menu" />
         </LinearLayout>
 
         <LinearLayout

@@ -20,7 +20,10 @@ class SettingsStore(context: Context) {
 
     /** live edge target offset in milliseconds (lower = less delay) */
     var latencyMs: Int
-        get() = p.getInt("latency", 2500)
+        get() {
+            val v = p.getInt("latency", 2000)
+            return if (v < 2000) 2000 else v
+        }
         set(v) = p.edit().putInt("latency", v).apply()
 
     /** 0 = fit, 1 = fill, 2 = zoom */
@@ -38,9 +41,9 @@ class SettingsStore(context: Context) {
         get() = p.getInt("engine", 0)
         set(v) = p.edit().putInt("engine", v).apply()
 
-    var signedInName: String
-        get() = p.getString("user", "") ?: ""
-        set(v) = p.edit().putString("user", v).apply()
+    var kickUsername: String
+        get() = p.getString("kick_user", "") ?: ""
+        set(v) = p.edit().putString("kick_user", v).apply()
 
     var lastVolume: Int
         get() = p.getInt("volume", -1)

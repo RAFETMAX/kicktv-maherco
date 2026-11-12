@@ -45,10 +45,25 @@ import java.util.Locale
 
 class MainActivity : AppCompatActivity() {
 
+    private val JS_USERNAME = """
+    (function () {
+      try {
+        var h = document.documentElement.innerHTML;
+        var m = h.match(/"username"\s*:\s*"([A-Za-z0-9_.\-]{2,32})"/);
+        if (m) return m[1];
+        var a = document.querySelector('a[href^="/"][href*="/settings"]');
+        if (a && a.textContent) return a.textContent.trim();
+        return "";
+      } catch (e) { return ""; }
+    })()
+    """
+
+
     private lateinit var settings: SettingsStore
     private lateinit var audioManager: AudioManager
     private lateinit var player: ExoPlayer
 
+    private lateinit var root: FrameLayout
     private lateinit var playerView: PlayerView
     private lateinit var webFallback: WebView
     private lateinit var overlayRoot: LinearLayout
@@ -64,6 +79,14 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnMute: ImageButton
     private lateinit var seekVolume: SeekBar
 
+    private var txtStatusSession: TextView? = null
+    private var txtStatusDelay: TextView? = null
+    private var txtStatusQuality: TextView? = null
+    private var channelId: Int = 0
+    private var sessionState: Int = 0
+    private var usernameScraping = false
+    private var lastCatchUp: Long = 0L
+
     private val ui = Handler(Looper.getMainLooper())
     private var controlsVisible = true
     private var panelVisible = false
@@ -74,6 +97,14 @@ class MainActivity : AppCompatActivity() {
     private var lastVolume = 8
 
     private val hideRunnable = Runnable { hideControls() }
+
+    private val driftRunnable = object : Runnable {
+        override fun run() {
+            maybeCatchUp()
+            if (panelVisible) updateStatusCard()
+            ui.postDelayed(this, 3000)
+        }
+    }
     private val clockRunnable = object : Runnable {
         override fun run() {
             txtClock.text = SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date())
@@ -96,10 +127,13 @@ class MainActivity : AppCompatActivity() {
         setupControls()
         buildPanel()
         ui.post(clockRunnable)
+        ui.post(driftRunnable)
         loadChannel()
+        ui.postDelayed({ checkSessionAsync() }, 2500)
     }
 
     private fun bind() {
+        root = findViewById(R.id.root)
         playerView = findViewById(R.id.player_view)
         webFallback = findViewById(R.id.web_fallback)
         overlayRoot = findViewById(R.id.overlay_root)
@@ -246,6 +280,8 @@ class MainActivity : AppCompatActivity() {
             .setLiveConfiguration(
                 MediaItem.LiveConfiguration.Builder()
                     .setTargetOffsetMs(settings.latencyMs.toLong())
+                    .setMinPlaybackSpeed(0.95f)
+                    .setMaxPlaybackSpeed(1.10f)
                     .build()
             )
             .build()
@@ -340,7 +376,6 @@ class MainActivity : AppCompatActivity() {
             showControls()
         }
         findViewById<ImageButton>(R.id.btn_settings).setOnClickListener { showPanel(true) }
-        findViewById<ImageButton>(R.id.btn_account).setOnClickListener { showPanel(true) }
         findViewById<ImageButton>(R.id.btn_close_panel).setOnClickListener { showPanel(false) }
         txtQuality.setOnClickListener { showPanel(true) }
 
@@ -578,6 +613,168 @@ class MainActivity : AppCompatActivity() {
         panelContent.addView(tv)
     }
 
+    private fun addStatusCard() {
+        val card = LinearLayout(this)
+        card.orientation = LinearLayout.VERTICAL
+        card.setBackgroundResource(R.drawable.bg_toast)
+        card.setPadding(dp(16), dp(14), dp(16), dp(14))
+        val lp = LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT
+        )
+        lp.bottomMargin = dp(10)
+        card.layoutParams = lp
+
+        txtStatusSession = TextView(this).apply {
+            textSize = 14.5f
+            setTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_primary))
+        }
+        txtStatusDelay = TextView(this).apply {
+            textSize = 13f
+            setTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_secondary))
+            setPadding(0, dp(6), 0, 0)
+        }
+        txtStatusQuality = TextView(this).apply {
+            textSize = 13f
+            setTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_secondary))
+            setPadding(0, dp(2), 0, 0)
+        }
+        card.addView(txtStatusSession)
+        card.addView(txtStatusDelay)
+        card.addView(txtStatusQuality)
+        panelContent.addView(card)
+        updateStatusCard()
+    }
+
+    private fun updateStatusCard() {
+        val session = txtStatusSession ?: return
+        val name = settings.kickUsername
+        session.text = when {
+            !SessionStore.hasSession() -> getString(R.string.session_missing)
+            sessionState == 1 -> getString(R.string.session_ok) +
+                (if (name.isNotBlank()) " · @$name" else "")
+            sessionState == -1 -> getString(R.string.session_bad)
+            else -> getString(R.string.session_checking)
+        }
+        session.setTextColor(
+            ContextCompat.getColor(
+                this,
+                when (sessionState) {
+                    1 -> R.color.accent
+                    -1 -> R.color.live_red
+                    else -> R.color.text_primary
+                }
+            )
+        )
+        txtStatusDelay?.text = getString(R.string.delay_value, delayText())
+        txtStatusQuality?.text = getString(R.string.quality_value, qualityText())
+    }
+
+    private fun liveOffsetMs(): Long {
+        if (usingWeb) return -1
+        return try {
+            val d = player.duration
+            val p = player.currentPosition
+            if (d <= 0 || p < 0) -1 else d - p
+        } catch (_: Exception) {
+            -1
+        }
+    }
+
+    private fun delayText(): String {
+        val offset = liveOffsetMs()
+        return if (offset < 0) "—" else String.format(Locale.US, "%.1f ث", offset / 1000f)
+    }
+
+    private fun qualityText(): String {
+        try {
+            for (group in player.currentTracks.groups) {
+                if (group.type != C.TRACK_TYPE_VIDEO) continue
+                for (i in 0 until group.length) {
+                    if (!group.isTrackSelected(i)) continue
+                    val f = group.getTrackFormat(i)
+                    if (f.height > 0) return "${f.height}p"
+                }
+            }
+        } catch (_: Exception) {
+        }
+        return if (settings.quality <= 0) getString(R.string.auto) else "${settings.quality}p"
+    }
+
+    /** keeps the delay from drifting: catches up smoothly instead of hard seeking */
+    private fun maybeCatchUp() {
+        if (usingWeb) return
+        val offset = liveOffsetMs()
+        if (offset <= 0) return
+        val now = System.currentTimeMillis()
+        if (offset > settings.latencyMs + 6000L && now - lastCatchUp > 20000L) {
+            lastCatchUp = now
+            try {
+                player.seekToDefaultPosition()
+            } catch (_: Exception) {
+            }
+        }
+    }
+
+    private fun checkSessionAsync() {
+        sessionState = 0
+        updateStatusCard()
+        Thread {
+            val info = KickApi.fetch(settings.channelSlug)
+            val id = info?.id ?: channelId
+            val ok = KickApi.checkSession(id)
+            ui.post {
+                if (isFinishing || isDestroyed) return@post
+                channelId = id
+                sessionState = if (ok) 1 else -1
+                updateStatusCard()
+                if (ok && settings.kickUsername.isBlank()) scrapeUsername()
+            }
+        }.start()
+    }
+
+    @SuppressLint("SetJavaScriptEnabled")
+    private fun scrapeUsername() {
+        if (usernameScraping) return
+        usernameScraping = true
+        val web = WebView(this)
+        web.setBackgroundColor(0)
+        web.settings.javaScriptEnabled = true
+        web.settings.domStorageEnabled = true
+        web.settings.userAgentString = KickApi.userAgent()
+        CookieManager.getInstance().setAcceptThirdPartyCookies(web, true)
+        web.webViewClient = object : WebViewClient() {
+            override fun onPageFinished(view: WebView, url: String) {
+                view.evaluateJavascript(JS_USERNAME) { raw ->
+                    val name = (raw ?: "").trim().trim('"')
+                    if (name.isNotBlank() && name != "null" && name.length < 40) {
+                        settings.kickUsername = name
+                        updateStatusCard()
+                    }
+                    usernameScraping = false
+                    dropWebView(web)
+                }
+            }
+        }
+        root.addView(web, FrameLayout.LayoutParams(1, 1))
+        web.loadUrl("https://kick.com/dashboard")
+        ui.postDelayed({
+            if (usernameScraping) {
+                usernameScraping = false
+                dropWebView(web)
+            }
+        }, 15000)
+    }
+
+    private fun dropWebView(web: WebView) {
+        try {
+            (web.parent as? android.view.ViewGroup)?.removeView(web)
+            web.loadUrl("about:blank")
+            web.destroy()
+        } catch (_: Exception) {
+        }
+    }
+
     private fun addChannelEditor() {
         val row = LinearLayout(this)
         row.orientation = LinearLayout.HORIZONTAL
@@ -626,10 +823,8 @@ class MainActivity : AppCompatActivity() {
         panelContent.removeAllViews()
 
         addSection(getString(R.string.account))
-        addInfoRow(
-            if (SessionStore.hasSession()) getString(R.string.session_embedded)
-            else getString(R.string.session_missing)
-        )
+        addStatusCard()
+        addActionRow(getString(R.string.check_session)) { checkSessionAsync() }
 
         addSection(getString(R.string.quality))
         val options = mutableListOf(Pair(getString(R.string.auto), 0))
@@ -645,10 +840,10 @@ class MainActivity : AppCompatActivity() {
         addSection(getString(R.string.latency))
         addChipRow(
             listOf(
-                Pair(getString(R.string.latency_ultra) + " · 1s", 1000),
-                Pair(getString(R.string.latency_low) + " · 2.5s", 2500),
-                Pair(getString(R.string.latency_balanced) + " · 6s", 6000),
-                Pair(getString(R.string.latency_stable) + " · 12s", 12000)
+                Pair("2s · " + getString(R.string.latency_recommended), 2000),
+                Pair("4s", 4000),
+                Pair("6s", 6000),
+                Pair("12s", 12000)
             ),
             settings.latencyMs
         ) { value ->
@@ -734,6 +929,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         ui.removeCallbacksAndMessages(null)
+        ui.removeCallbacks(driftRunnable)
         try {
             player.release()
         } catch (_: Exception) {

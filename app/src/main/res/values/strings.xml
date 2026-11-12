@@ -9,10 +9,6 @@
     <string name="quality">الجودة</string>
     <string name="auto">تلقائي</string>
     <string name="latency">زمن التأخير (التزامن المباشر)</string>
-    <string name="latency_ultra">فائق الانخفاض</string>
-    <string name="latency_low">منخفض</string>
-    <string name="latency_balanced">متوازن</string>
-    <string name="latency_stable">ثابت</string>
     <string name="aspect">نسبة العرض</string>
     <string name="aspect_fit">احتواء</string>
     <string name="aspect_fill">ملء</string>
@@ -35,6 +31,12 @@
     <string name="engine_native">سريع (بلا تأخير)</string>
     <string name="engine_web">المشغل الرسمي (بديل)</string>
     <string name="about">KickTV — مشغل بث مباشر لتلفازك</string>
-    <string name="session_embedded">متصل بحسابك — جلسة مدمجة</string>
     <string name="session_missing">لا توجد جلسة مدمجة في هذا الإصدار</string>
+    <string name="session_ok">الجلسة متصلة ✓</string>
+    <string name="session_bad">الجلسة غير صالحة ✗</string>
+    <string name="session_checking">جارٍ فحص الجلسة…</string>
+    <string name="check_session">فحص الجلسة الآن</string>
+    <string name="latency_recommended">موصى به</string>
+    <string name="delay_value">الفارق عن البث المباشر: %1$s</string>
+    <string name="quality_value">الجودة الحالية: %1$s</string>
 </resources>
