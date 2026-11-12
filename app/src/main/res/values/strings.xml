@@ -45,4 +45,5 @@
     <string name="paste_clipboard">لصق من الحافظة</string>
     <string name="import_done">تم حفظ الجلسة وتطبيقها</string>
     <string name="import_failed">صيغة غير صحيحة — تأكد أنه ملف كوكيز JSON</string>
+    <string name="account_view">حسابي على كيك (عرض)</string>
 </resources>

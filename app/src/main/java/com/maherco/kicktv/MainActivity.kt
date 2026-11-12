@@ -24,6 +24,7 @@ import android.widget.SeekBar
 import android.widget.TextView
 import android.widget.Toast
 import android.content.ClipboardManager
+import android.graphics.Color
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
@@ -51,29 +52,19 @@ class MainActivity : AppCompatActivity() {
 
     private val JS_PROBE = """
     (function () {
-      var out = { ok: false, user: "", statuses: [] };
-      var eps = ["/api/v2/me", "/api/v2/user", "/api/v2/channels/followed"];
-      function done() { try { KickTVProbe.post(JSON.stringify(out)); } catch (e) {} }
-      function step(i) {
-        if (i >= eps.length) { done(); return; }
-        fetch(eps[i], { credentials: "include", headers: { "Accept": "application/json", "x-app-platform": "web" } })
-          .then(function (r) {
-            out.statuses.push(r.status);
-            if (r.status === 200) {
-              r.text().then(function (t) {
-                try {
-                  var j = JSON.parse(t);
-                  var u = j.username || (j.user && j.user.username) || (j.data && j.data.username) || "";
-                  if (u) out.user = u;
-                } catch (e) {}
-                out.ok = true;
-                done();
-              });
-            } else { step(i + 1); }
-          })
-          .catch(function () { out.statuses.push(-1); step(i + 1); });
+      try {
+        var html = document.documentElement.innerHTML || "";
+        var m = html.match(/"username"\s*:\s*"([A-Za-z0-9_.\-]{2,32})"/);
+        KickTVProbe.post(JSON.stringify({
+          path: location.pathname || "",
+          user: m ? m[1] : "",
+          avatar: document.querySelector('img[src*="/images/user/"]') ? 1 : 0,
+          login: document.querySelector('a[href="/login"]') ? 1 : 0,
+          token: document.cookie.indexOf("session_token") >= 0 ? 1 : 0
+        }));
+      } catch (e) {
+        try { KickTVProbe.post(JSON.stringify({ path: "", user: "", avatar: 0, login: 0, token: 0 })); } catch (x) {}
       }
-      step(0);
     })()
     """
 
@@ -101,8 +92,11 @@ class MainActivity : AppCompatActivity() {
     private var txtStatusSession: TextView? = null
     private var txtStatusDelay: TextView? = null
     private var txtStatusQuality: TextView? = null
+    private var txtStatusDiag: TextView? = null
     private var sessionState: Int = 0
     private var probeRunning = false
+    private var probeDiag: String = ""
+    private var accountView: FrameLayout? = null
     private var lastCatchUp: Long = 0L
 
     private val ui = Handler(Looper.getMainLooper())
@@ -503,6 +497,10 @@ class MainActivity : AppCompatActivity() {
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
         if (event.action == KeyEvent.ACTION_DOWN) {
+            if (event.keyCode == KeyEvent.KEYCODE_BACK && accountView != null) {
+                dismissAccountView()
+                return true
+            }
             if (event.keyCode == KeyEvent.KEYCODE_BACK && panelVisible) {
                 showPanel(false)
                 return true
@@ -727,9 +725,15 @@ class MainActivity : AppCompatActivity() {
             setTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_secondary))
             setPadding(0, dp(2), 0, 0)
         }
+        txtStatusDiag = TextView(this).apply {
+            textSize = 11f
+            setTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_secondary))
+            setPadding(0, dp(4), 0, 0)
+        }
         card.addView(txtStatusSession)
         card.addView(txtStatusDelay)
         card.addView(txtStatusQuality)
+        card.addView(txtStatusDiag)
         panelContent.addView(card)
         updateStatusCard()
     }
@@ -758,6 +762,8 @@ class MainActivity : AppCompatActivity() {
         )
         txtStatusDelay?.text = getString(R.string.delay_value, delayText())
         txtStatusQuality?.text = getString(R.string.quality_value, qualityText())
+        txtStatusDiag?.text = probeDiag
+        txtStatusDiag?.visibility = if (probeDiag.isBlank()) View.GONE else View.VISIBLE
     }
 
     private fun liveOffsetMs(): Long {
@@ -827,6 +833,9 @@ class MainActivity : AppCompatActivity() {
         CookieManager.getInstance().setAcceptCookie(true)
         CookieManager.getInstance().setAcceptThirdPartyCookies(web, true)
         web.addJavascriptInterface(ProbeBridge { raw -> handleProbe(raw, web) }, "KickTVProbe")
+        // cookies are pushed again once a WebView exists, otherwise some devices
+        // drop them before the browser engine is up
+        SessionStore.reapply(this)
         web.webViewClient = object : WebViewClient() {
             override fun onPageFinished(view: WebView, url: String) {
                 view.postDelayed({
@@ -834,11 +843,11 @@ class MainActivity : AppCompatActivity() {
                         view.evaluateJavascript(JS_PROBE, null)
                     } catch (_: Exception) {
                     }
-                }, 1500)
+                }, 3000)
             }
         }
         root.addView(web, FrameLayout.LayoutParams(1, 1))
-        web.loadUrl("https://kick.com/")
+        web.loadUrl("https://kick.com/dashboard")
         ui.postDelayed({
             if (probeRunning) {
                 probeRunning = false
@@ -852,25 +861,96 @@ class MainActivity : AppCompatActivity() {
     private fun handleProbe(raw: String?, web: WebView) {
         if (!probeRunning) return
         probeRunning = false
-        var ok = false
+        var path = ""
         var user = ""
-        val statuses = mutableListOf<Int>()
+        var avatar = 0
+        var login = 0
+        var token = 0
         try {
             val o = JSONObject(raw ?: "{}")
-            ok = o.optBoolean("ok", false)
+            path = o.optString("path", "")
             user = o.optString("user", "")
-            val arr = o.optJSONArray("statuses")
-            if (arr != null) for (i in 0 until arr.length()) statuses.add(arr.optInt(i, 0))
+            avatar = o.optInt("avatar", 0)
+            login = o.optInt("login", 0)
+            token = o.optInt("token", 0)
         } catch (_: Exception) {
         }
         if (user.isNotBlank() && user.length < 40) settings.kickUsername = user
         sessionState = when {
-            ok -> 1
-            statuses.isNotEmpty() && statuses.all { it == 401 || it == 403 } -> -1
+            user.isNotBlank() || avatar == 1 || path.startsWith("/dashboard") -> 1
+            login == 1 || path.contains("login") -> -1
             else -> -2
         }
+        probeDiag = "path=$path · token=$token · login=$login · avatar=$avatar"
         updateStatusCard()
         dropWebView(web)
+    }
+
+    /** Shows Kick inside the app so the account state can be seen, and fixed. */
+    @SuppressLint("SetJavaScriptEnabled")
+    private fun showAccountView() {
+        if (accountView != null) return
+        val container = FrameLayout(this)
+        container.setBackgroundColor(Color.BLACK)
+
+        val web = WebView(this)
+        web.setBackgroundColor(Color.BLACK)
+        web.settings.javaScriptEnabled = true
+        web.settings.domStorageEnabled = true
+        web.settings.userAgentString = KickApi.userAgent()
+        CookieManager.getInstance().setAcceptCookie(true)
+        CookieManager.getInstance().setAcceptThirdPartyCookies(web, true)
+        web.webViewClient = WebViewClient()
+        container.addView(
+            web,
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            )
+        )
+
+        val close = ImageButton(this)
+        close.setImageResource(R.drawable.ic_close)
+        close.setBackgroundResource(R.drawable.ctrl_bg)
+        close.contentDescription = getString(R.string.close)
+        close.setPadding(dp(12), dp(12), dp(12), dp(12))
+        val clp = FrameLayout.LayoutParams(dp(52), dp(52))
+        clp.gravity = Gravity.TOP or Gravity.START
+        clp.setMargins(dp(20), dp(20), 0, 0)
+        close.layoutParams = clp
+        close.setOnClickListener { dismissAccountView() }
+        container.addView(close)
+
+        root.addView(
+            container,
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            )
+        )
+        accountView = container
+        SessionStore.reapply(this)
+        web.loadUrl("https://kick.com/dashboard")
+    }
+
+    private fun dismissAccountView() {
+        val container = accountView ?: return
+        accountView = null
+        try {
+            val web = container.getChildAt(0) as? WebView
+            container.removeAllViews()
+            if (web != null) {
+                web.loadUrl("about:blank")
+                web.destroy()
+            }
+        } catch (_: Exception) {
+        }
+        try {
+            root.removeView(container)
+        } catch (_: Exception) {
+        }
+        sessionState = 0
+        probeSession()
     }
 
     private fun dropWebView(web: WebView) {
@@ -932,6 +1012,7 @@ class MainActivity : AppCompatActivity() {
         addSection(getString(R.string.account))
         addStatusCard()
         addActionRow(getString(R.string.check_session)) { probeSession() }
+        addActionRow(getString(R.string.account_view)) { showAccountView() }
         addActionRow(getString(R.string.import_session)) { showImportDialog() }
 
         addSection(getString(R.string.quality))

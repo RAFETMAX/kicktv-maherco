@@ -40,6 +40,13 @@ object SessionStore {
         install(raw)
     }
 
+    /** Pushes the session into the cookie jar again (safe to call any time). */
+    fun reapply(context: Context) {
+        val raw = stored(context) ?: bundled(context)
+        if (raw.isNullOrBlank()) return
+        install(raw)
+    }
+
     /**
      * Installs a cookie export the user pasted in the app (JSON array, the same
      * shape a browser "export cookies" extension writes) and remembers it.
