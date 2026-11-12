@@ -39,22 +39,23 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
+import org.json.JSONObject
+import org.json.JSONTokener
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
 class MainActivity : AppCompatActivity() {
 
-    private val JS_USERNAME = """
+    private val JS_PROBE = """
     (function () {
       try {
-        var h = document.documentElement.innerHTML;
-        var m = h.match(/"username"\s*:\s*"([A-Za-z0-9_.\-]{2,32})"/);
-        if (m) return m[1];
-        var a = document.querySelector('a[href^="/"][href*="/settings"]');
-        if (a && a.textContent) return a.textContent.trim();
-        return "";
-      } catch (e) { return ""; }
+        var html = document.documentElement.innerHTML || "";
+        var m = html.match(/"username"\s*:\s*"([A-Za-z0-9_.\-]{2,32})"/);
+        return JSON.stringify({ path: location.pathname || "", user: m ? m[1] : "" });
+      } catch (e) {
+        return JSON.stringify({ path: "", user: "" });
+      }
     })()
     """
 
@@ -82,9 +83,8 @@ class MainActivity : AppCompatActivity() {
     private var txtStatusSession: TextView? = null
     private var txtStatusDelay: TextView? = null
     private var txtStatusQuality: TextView? = null
-    private var channelId: Int = 0
     private var sessionState: Int = 0
-    private var usernameScraping = false
+    private var probeRunning = false
     private var lastCatchUp: Long = 0L
 
     private val ui = Handler(Looper.getMainLooper())
@@ -129,7 +129,7 @@ class MainActivity : AppCompatActivity() {
         ui.post(clockRunnable)
         ui.post(driftRunnable)
         loadChannel()
-        ui.postDelayed({ checkSessionAsync() }, 2500)
+        ui.postDelayed({ probeSession() }, 4000)
     }
 
     private fun bind() {
@@ -654,6 +654,7 @@ class MainActivity : AppCompatActivity() {
             sessionState == 1 -> getString(R.string.session_ok) +
                 (if (name.isNotBlank()) " · @$name" else "")
             sessionState == -1 -> getString(R.string.session_bad)
+            sessionState == -2 -> getString(R.string.session_unknown)
             else -> getString(R.string.session_checking)
         }
         session.setTextColor(
@@ -662,6 +663,7 @@ class MainActivity : AppCompatActivity() {
                 when (sessionState) {
                     1 -> R.color.accent
                     -1 -> R.color.live_red
+                    -2 -> R.color.text_secondary
                     else -> R.color.text_primary
                 }
             )
@@ -716,54 +718,64 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun checkSessionAsync() {
+    /**
+     * Ground-truth check: opens Kick's dashboard in a hidden WebView carrying the
+     * bundled cookies. If Kick keeps the page on the dashboard, or exposes the
+     * username, the session works. If it bounces to /login it does not.
+     */
+    @SuppressLint("SetJavaScriptEnabled")
+    private fun probeSession() {
+        if (probeRunning) return
+        probeRunning = true
         sessionState = 0
         updateStatusCard()
-        Thread {
-            val info = KickApi.fetch(settings.channelSlug)
-            val id = info?.id ?: channelId
-            val ok = KickApi.checkSession(id)
-            ui.post {
-                if (isFinishing || isDestroyed) return@post
-                channelId = id
-                sessionState = if (ok) 1 else -1
-                updateStatusCard()
-                if (ok && settings.kickUsername.isBlank()) scrapeUsername()
-            }
-        }.start()
-    }
 
-    @SuppressLint("SetJavaScriptEnabled")
-    private fun scrapeUsername() {
-        if (usernameScraping) return
-        usernameScraping = true
         val web = WebView(this)
         web.setBackgroundColor(0)
         web.settings.javaScriptEnabled = true
         web.settings.domStorageEnabled = true
         web.settings.userAgentString = KickApi.userAgent()
+        CookieManager.getInstance().setAcceptCookie(true)
         CookieManager.getInstance().setAcceptThirdPartyCookies(web, true)
         web.webViewClient = object : WebViewClient() {
             override fun onPageFinished(view: WebView, url: String) {
-                view.evaluateJavascript(JS_USERNAME) { raw ->
-                    val name = (raw ?: "").trim().trim('"')
-                    if (name.isNotBlank() && name != "null" && name.length < 40) {
-                        settings.kickUsername = name
-                        updateStatusCard()
-                    }
-                    usernameScraping = false
-                    dropWebView(web)
-                }
+                view.postDelayed({
+                    view.evaluateJavascript(JS_PROBE) { raw -> handleProbe(raw, web) }
+                }, 2000)
             }
         }
         root.addView(web, FrameLayout.LayoutParams(1, 1))
         web.loadUrl("https://kick.com/dashboard")
         ui.postDelayed({
-            if (usernameScraping) {
-                usernameScraping = false
+            if (probeRunning) {
+                probeRunning = false
+                sessionState = -2
+                updateStatusCard()
                 dropWebView(web)
             }
-        }, 15000)
+        }, 25000)
+    }
+
+    private fun handleProbe(raw: String?, web: WebView) {
+        if (!probeRunning) return
+        probeRunning = false
+        var path = ""
+        var user = ""
+        try {
+            val inner = JSONTokener(raw ?: "").nextValue()
+            if (inner is String) {
+                val o = JSONObject(inner)
+                path = o.optString("path", "")
+                user = o.optString("user", "")
+            }
+        } catch (_: Exception) {
+        }
+        val loggedIn = user.isNotBlank() ||
+            (path.startsWith("/dashboard") && !path.contains("login"))
+        if (user.isNotBlank() && user.length < 40) settings.kickUsername = user
+        sessionState = if (loggedIn) 1 else -1
+        updateStatusCard()
+        dropWebView(web)
     }
 
     private fun dropWebView(web: WebView) {
@@ -824,7 +836,7 @@ class MainActivity : AppCompatActivity() {
 
         addSection(getString(R.string.account))
         addStatusCard()
-        addActionRow(getString(R.string.check_session)) { checkSessionAsync() }
+        addActionRow(getString(R.string.check_session)) { probeSession() }
 
         addSection(getString(R.string.quality))
         val options = mutableListOf(Pair(getString(R.string.auto), 0))

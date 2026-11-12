@@ -39,4 +39,5 @@
     <string name="latency_recommended">موصى به</string>
     <string name="delay_value">الفارق عن البث المباشر: %1$s</string>
     <string name="quality_value">الجودة الحالية: %1$s</string>
+    <string name="session_unknown">تعذّر فحص الجلسة — أعد المحاولة</string>
 </resources>
